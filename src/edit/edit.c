@@ -23,6 +23,7 @@ static char buf[MAXLINES][MAXCOLS];
 static int  nlines = 0;
 static int  cy = 0, cx = 0, top = 0;
 static int  dirty = 0;
+static int  overwrite = 0;   /* Insert 键切换；DOS 里对应光标从下划线变整块 */
 static char fname[TND_PATH_MAX];
 static int  H = 25, W = 80;
 static char msg[64];
@@ -87,6 +88,12 @@ static void insertch(int ch) {
     int len = linelen(cy);
     int i;
     if (len >= MAXCOLS - 1) return;
+    if (overwrite && cx < len) {
+        buf[cy][cx] = (char)ch;          /* 覆盖模式：直接盖掉，不挪后面的 */
+        cx++;
+        dirty = 1;
+        return;
+    }
     for (i = len; i >= cx; i--) buf[cy][i + 1] = buf[cy][i];
     buf[cy][cx] = (char)ch;
     cx++;
@@ -204,6 +211,19 @@ static void draw(void) {
         }
         row[W] = 0;
         tnd_puts(row);
+
+        /* 覆盖模式下自己画一个反白方块当光标。
+         * UEFI 的文本模式**只能显隐光标、不能设形状**，所以 DOS 那种
+         * "下划线 / Ins 后变整块"没法照搬：插入模式交给固件的光标，
+         * 覆盖模式额外画一个方块，两者一眼能分开。 */
+        if (iscur && overwrite && cx < W) {
+            char cell[2];
+            cell[0] = row[cx] ? row[cx] : ' ';
+            cell[1] = 0;
+            tnd_setattr(TND_ATTR(TND_BLUE, TND_WHITE));
+            tnd_gotoxy(cx, 1 + i);
+            tnd_puts(cell);
+        }
     }
 
     /* --- 提示行：黑底青 --- */
@@ -211,7 +231,7 @@ static void draw(void) {
     tnd_gotoxy(0, 1 + tr);
     {
         char t[160];
-        tnd_strncpy(t, " F2 Save    ESC Quit    arrows move    Enter split    Bksp/Del delete", sizeof(t));
+        tnd_strncpy(t, " F2 Save   ESC Quit   arrows/Home/End   Enter newline   Bksp/Del   Ins = insert/overwrite", sizeof(t));
         if (msg[0]) { tnd_strcat(t, "    -- ", sizeof(t)); tnd_strcat(t, msg, sizeof(t)); }
         for (i = (int)tnd_strlen(t); i < W; i++) tnd_strcat(t, " ", sizeof(t));
         tnd_puts(t);
@@ -227,7 +247,9 @@ static void draw(void) {
         /* 先铺满再用 gotoxy 写内容，免得残留上一帧的字符 */
         tnd_puts(t);
         tnd_gotoxy(1, 2 + tr);
-        tnd_printf("Ln %d/%d    Col %d    %d line(s)", cy + 1, nlines, cx + 1, nlines);
+        tnd_printf("Ln %d/%d    Col %d    %d line(s)    %s%s",
+                   cy + 1, nlines, cx + 1, nlines,
+                   overwrite ? "OVR" : "INS", dirty ? "   [modified]" : "");
     }
 
     /* 光标恢复成正文色 */
@@ -254,6 +276,9 @@ int tnx_main(void) {
     if (!load()) setmsg("new file");
     else setmsg("");
 
+    /* 光标必须可见 —— 看不见光标的编辑器没法用 */
+    tnd_cursor(1);
+
     while (!quit) {
         clamp();
         draw();
@@ -273,6 +298,7 @@ int tnx_main(void) {
             else if (sc == TND_S_PGDN)  cy += textrows();
             else if (sc == TND_S_DELETE) delchar();
             else if (sc == S_F2)        { if (save()) setmsg("saved"); else setmsg("SAVE FAILED"); }
+            else if (sc == TND_S_INSERT) overwrite = !overwrite;
             else if (sc == TND_S_ESC)   quit = 1;
         } else {
             int ch = TND_KEY(k);
@@ -296,6 +322,7 @@ int tnx_main(void) {
     /* 退出时把颜色恢复成 DOS 默认的浅灰 on 黑，
      * 否则 Shell 的提示符会带着 EDIT 的配色继续跑 */
     tnd_setattr(TND_ATTR(TND_LIGHTGRAY, TND_BLACK));
+    tnd_cursor(1);          /* 交还给 Shell 之前确保光标是开的 */
     tnd_cls();
     tnd_printf("\n  EDIT: closed %s\n", fname);
     return 0;
