@@ -1,0 +1,9 @@
+bin/
+obj/
+build/
+*.o
+*.elf
+*.TNX
+*.EFI
+.vs/
+.vscode/
