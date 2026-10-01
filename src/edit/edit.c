@@ -158,52 +158,80 @@ static void clamp(void) {
 }
 
 /* ------------------------------------------------------------------ 绘制 */
+/* 三块区域用颜色分开 —— 全屏程序没有颜色就是一片字，分不清哪里是边框。
+ * 配色照抄 DOS 的经典组合，常量在 tnd_api.h 里（UEFI 和 VGA 属性字节一致）。 */
+#define C_TEXT   TND_ATTR(TND_LIGHTGRAY, TND_BLACK)     /* 正文 */
+#define C_TITLE  TND_ATTR(TND_WHITE,     TND_BLUE)      /* 标题栏 */
+#define C_HELP   TND_ATTR(TND_BLACK,     TND_CYAN)      /* 操作提示 */
+#define C_STATUS TND_ATTR(TND_BLACK,     TND_LIGHTGRAY) /* 状态行 */
+#define C_CUR    TND_ATTR(TND_WHITE,     TND_BLUE)      /* 当前行 */
+
 static void draw(void) {
     int i, tr = textrows();
     char row[MAXCOLS + 2];
 
+    tnd_setattr(C_TEXT);
     tnd_cls();
 
     /* 标题 */
+    /* --- 标题栏：白底蓝 --- */
+    tnd_setattr(C_TITLE);
     tnd_gotoxy(0, 0);
     {
-        char t[96];
-        tnd_strncpy(t, " TNDDOS EDIT  ", sizeof(t));
-        tnd_strcat(t, fname, sizeof(t));
+        char t[160];
+        tnd_strncpy(t, " TNDDOS EDIT", sizeof(t));
+        if (fname[0]) { tnd_strcat(t, "  --  ", sizeof(t)); tnd_strcat(t, fname, sizeof(t)); }
         if (dirty) tnd_strcat(t, "   [modified]", sizeof(t));
         for (i = (int)tnd_strlen(t); i < W; i++) tnd_strcat(t, " ", sizeof(t));
         tnd_puts(t);
     }
 
-    /* 文本区 */
+    /* --- 文本区：浅灰 on 黑；当前行反白 --- */
     for (i = 0; i < tr; i++) {
         int li = top + i, j;
+        int iscur = (li == cy);
+
+        tnd_setattr(iscur ? C_CUR : C_TEXT);
         tnd_gotoxy(0, 1 + i);
+
         if (li < nlines) {
             int len = linelen(li);
             for (j = 0; j < W && j < len; j++) row[j] = buf[li][j];
             for (; j < W; j++) row[j] = ' ';
         } else {
-            for (j = 0; j < W; j++) row[j] = ' ';
+            row[0] = '~';                       /* 文件结尾之后的空行标记 */
+            for (j = 1; j < W; j++) row[j] = ' ';
         }
         row[W] = 0;
         tnd_puts(row);
     }
 
-    /* 提示行 */
+    /* --- 提示行：黑底青 --- */
+    tnd_setattr(C_HELP);
     tnd_gotoxy(0, 1 + tr);
     {
-        char t[96];
-        tnd_strncpy(t, " F2 Save   ESC Quit", sizeof(t));
-        if (msg[0]) { tnd_strcat(t, "   -- ", sizeof(t)); tnd_strcat(t, msg, sizeof(t)); }
+        char t[160];
+        tnd_strncpy(t, " F2 Save    ESC Quit    arrows move    Enter split    Bksp/Del delete", sizeof(t));
+        if (msg[0]) { tnd_strcat(t, "    -- ", sizeof(t)); tnd_strcat(t, msg, sizeof(t)); }
         for (i = (int)tnd_strlen(t); i < W; i++) tnd_strcat(t, " ", sizeof(t));
         tnd_puts(t);
     }
 
-    /* 状态行 */
+    /* --- 状态行：黑底浅灰 --- */
+    tnd_setattr(C_STATUS);
     tnd_gotoxy(0, 2 + tr);
-    tnd_printf(" Ln %d/%d   Col %d   %d lines", cy + 1, nlines, cx + 1, nlines);
+    {
+        char t[96];
+        tnd_strncpy(t, " ", sizeof(t));
+        for (i = (int)tnd_strlen(t); i < W; i++) tnd_strcat(t, " ", sizeof(t));
+        /* 先铺满再用 gotoxy 写内容，免得残留上一帧的字符 */
+        tnd_puts(t);
+        tnd_gotoxy(1, 2 + tr);
+        tnd_printf("Ln %d/%d    Col %d    %d line(s)", cy + 1, nlines, cx + 1, nlines);
+    }
 
+    /* 光标恢复成正文色 */
+    tnd_setattr(C_TEXT);
     tnd_gotoxy(cx, 1 + cy - top);
 }
 
@@ -265,6 +293,9 @@ int tnx_main(void) {
         }
     }
 
+    /* 退出时把颜色恢复成 DOS 默认的浅灰 on 黑，
+     * 否则 Shell 的提示符会带着 EDIT 的配色继续跑 */
+    tnd_setattr(TND_ATTR(TND_LIGHTGRAY, TND_BLACK));
     tnd_cls();
     tnd_printf("\n  EDIT: closed %s\n", fname);
     return 0;
